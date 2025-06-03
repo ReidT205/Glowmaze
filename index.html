@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlowMaze</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Orbitron', monospace;
+            color: #fff;
+        }
+        canvas {
+            display: block;
+        }
+        
+        /* Enhanced UI Container */
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            backdrop-filter: blur(5px);
+        }
+        
+        #ammo-counter {
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #00ffff;
+            font-weight: 700;
+        }
+        
+        /* Enhanced Health Bar */
+        #health-bar {
+            width: 200px;
+            height: 25px;
+            background: linear-gradient(45deg, rgba(51, 51, 51, 0.8), rgba(31, 31, 31, 0.8));
+            border: 2px solid #00ffff;
+            border-radius: 15px;
+            margin-bottom: 10px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+        }
+        
+        #health-fill {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #ff0040, #ff4080, #ff00ff);
+            transition: width 0.3s ease;
+            box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.2);
+        }
+        
+        #health-bar::after {
+            content: 'HEALTH';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 12px;
+            font-weight: 700;
+            color: #fff;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        }
+        
+        /* Game Stats */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        
+        .stat-label {
+            color: #aaa;
+            margin-right: 10px;
+        }
+        
+        .stat-value {
+            color: #00ffff;
+            font-weight: 700;
+        }
+        
+        /* Enhanced Crosshair */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            pointer-events: none;
+            z-index: 5;
+        }
+        
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: linear-gradient(45deg, #00ffff, #ffffff);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+        }
+        
+        #crosshair::before {
+            width: 3px;
+            height: 30px;
+            left: 13px;
+        }
+        
+        #crosshair::after {
+            width: 30px;
+            height: 3px;
+            top: 13px;
+        }
+        
+        /* Mini HUD */
+        #mini-hud {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        #compass {
+            width: 80px;
+            height: 80px;
+            border: 2px solid #00ffff;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 255, 255, 0.1), rgba(0, 0, 0, 0.5));
+            position: relative;
+            margin: 0 auto 10px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+        }
+        
+        #compass::before {
+            content: 'N';
+            position: absolute;
+            top: 5px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #00ffff;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        
+        #compass-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px;
+            height: 30px;
+            background: linear-gradient(180deg, #ff0040, #00ffff);
+            transform-origin: bottom center;
+            transform: translate(-50%, -100%);
+            box-shadow: 0 0 5px rgba(255, 0, 64, 0.8);
+        }
+        
+        /* Status Indicators */
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-green { background-color: #00ff00; }
+        .status-yellow { background-color: #ffff00; }
+        .status-red { background-color: #ff0000; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        /* Enhanced Start Screen */
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #000428, #004e92);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            text-align: center;
+            z-index: 100;
+        }
+        
+        #start-screen h1 {
+            font-size: 64px;
+            margin-bottom: 20px;
+            background: linear-gradient(45deg, #00ffff, #ffffff, #00ffff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+            animation: titleGlow 3s ease-in-out infinite alternate;
+        }
+        
+        @keyframes titleGlow {
+            from { filter: drop-shadow(0 0 20px rgba(0, 255, 255, 0.5)); }
+            to { filter: drop-shadow(0 0 40px rgba(0, 255, 255, 0.8)); }
+        }
+        
+        #start-screen p {
+            font-size: 20px;
+            margin-bottom: 40px;
+            max-width: 700px;
+            line-height: 1.6;
+            color: #ccc;
+        }
+        
+        #start-button {
+            padding: 20px 40px;
+            font-size: 22px;
+            font-family: 'Orbitron', monospace;
+            font-weight: 700;
+            background: linear-gradient(45deg, #00ffff, #0080ff);
+            color: #000;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+        }
+        
+        #start-button:hover {
+            background: linear-gradient(45deg, #ffffff, #00ffff);
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.8);
+        }
+        
+        /* Enhanced Death Screen */
+        #death-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #2c0000, #660000);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            text-align: center;
+            z-index: 100;
+        }
+        
+        .death-content {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 50px;
+            border-radius: 20px;
+            border: 2px solid #ff0040;
+            max-width: 500px;
+            box-shadow: 0 0 50px rgba(255, 0, 64, 0.5);
+            backdrop-filter: blur(10px);
+        }
+        
+        .death-content h2 {
+            color: #ff0040;
+            font-size: 48px;
+            margin-bottom: 30px;
+            text-shadow: 0 0 20px rgba(255, 0, 64, 0.8);
+            animation: deathPulse 2s ease-in-out infinite alternate;
+        }
+        
+        @keyframes deathPulse {
+            from { text-shadow: 0 0 20px rgba(255, 0, 64, 0.5); }
+            to { text-shadow: 0 0 40px rgba(255, 0, 64, 1); }
+        }
+        
+        .death-content p {
+            font-size: 18px;
+            margin: 15px 0;
+            color: #ccc;
+        }
+        
+        .death-content .stat-highlight {
+            color: #00ffff;
+            font-weight: 700;
+            font-size: 20px;
+        }
+        
+        #restart-button {
+            padding: 15px 30px;
+            font-size: 18px;
+            font-family: 'Orbitron', monospace;
+            font-weight: 700;
+            background: linear-gradient(45deg, #ff0040, #ff4080);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 20px;
+            box-shadow: 0 0 30px rgba(255, 0, 64, 0.5);
+        }
+        
+        #restart-button:hover {
+            background: linear-gradient(45deg, #ffffff, #ff0040);
+            color: #000;
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(255, 0, 64, 0.8);
+        }
+        
+        /* Tutorial Text */
+        #tutorial-text {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #00ffff;
+            font-size: 14px;
+            text-align: center;
+            pointer-events: none;
+            z-index: 5;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 20px;
+            border-radius: 20px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            backdrop-filter: blur(5px);
+        }
+        
+        .tutorial-key {
+            color: #ffffff;
+            font-weight: 700;
+            background: rgba(0, 255, 255, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 0 2px;
+        }
+        
+        /* Performance Overlay */
+        #performance-overlay {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        /* Scan Indicator */
+        #scan-indicator {
+            position: absolute;
+            top: 50%;
+            left: 20px;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 200px;
+            background: linear-gradient(180deg, transparent, #00ffff, transparent);
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            z-index: 5;
+        }
+        
+        #scan-indicator.active {
+            opacity: 0.8;
+            animation: scanPulse 0.5s ease-in-out;
+        }
+        
+        @keyframes scanPulse {
+            0% { transform: translateY(-50%) scaleY(0); }
+            100% { transform: translateY(-50%) scaleY(1); }
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            #start-screen h1 { font-size: 48px; }
+            #start-screen p { font-size: 16px; }
+            #ui-container { font-size: 14px; }
+            #tutorial-text { font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Main UI Container -->
+    <div id="ui-container">
+        <div id="ammo-counter">Scanner Energy: 100%</div>
+        <div id="health-bar">
+            <div id="health-fill"></div>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Score:</span>
+            <span class="stat-value" id="score-counter">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Monsters:</span>
+            <span class="stat-value" id="monster-counter">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">FPS:</span>
+            <span class="stat-value" id="fps-counter">60</span>
+        </div>
+    </div>
+    
+    <!-- Mini HUD -->
+    <div id="mini-hud">
+        <div id="compass">
+            <div id="compass-needle"></div>
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot status-green"></div>
+            <span>Scanner Online</span>
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot status-yellow"></div>
+            <span>Entities Detected</span>
+        </div>
+    </div>
+    
+    <!-- Enhanced Crosshair -->
+    <div id="crosshair"></div>
+    
+    <!-- Scan Indicator -->
+    <div id="scan-indicator"></div>
+    
+    <!-- Performance Overlay -->
+    <div id="performance-overlay">
+        <div>Markers: <span id="marker-count">0</span></div>
+        <div>Render: <span id="render-time">0ms</span></div>
+    </div>
+    
+    <!-- Tutorial Text -->
+    <div id="tutorial-text">
+        <span class="tutorial-key">WASD</span> Move | 
+        <span class="tutorial-key">SHIFT</span> Sprint | 
+        <span class="tutorial-key">SPACE</span> Scan | 
+        <span class="tutorial-key">MOUSE</span> Look | 
+        <span class="tutorial-key">ESC</span> Pause
+    </div>
+    
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <h1>GlowMaze</h1>
+        <p>Navigate through absolute darkness using your quantum scanner to reveal the environment. 
+        Eliminate hostile entities while conserving energy. Survive as long as possible.</p>
+        <button id="start-button">Initialize Mission</button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
