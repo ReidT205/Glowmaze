@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlowMaze - Horror Exploration Game</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+        }
+        body {
+            overflow: hidden;
+            min-height: 100vh;
+            background: radial-gradient(ellipse at 50% 30%, #001a1a 60%, #000 100%);
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            color: #00ffff;
+        }
+        #game-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        #menu-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.7);
+            z-index: 2000;
+        }
+        .menu {
+            background: rgba(10, 20, 30, 0.95);
+            border-radius: 18px;
+            border: 2.5px solid #00ffff;
+            box-shadow: 0 0 32px 4px #00ffff55, 0 0 0 2px #00ffff44;
+            padding: 48px 40px 36px 40px;
+            min-width: 340px;
+            max-width: 420px;
+            margin: 32px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: menuFadeIn 0.7s cubic-bezier(.4,2,.6,1) 1;
+        }
+        @keyframes menuFadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .menu h1, .menu h2 {
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            font-weight: 900;
+            font-size: 2.5rem;
+            margin-bottom: 18px;
+            color: #00ffff;
+            text-shadow: 0 0 18px #00ffff, 0 0 32px #00ffff99;
+            letter-spacing: 1px;
+        }
+        .menu p {
+            font-size: 1.15rem;
+            color: #bffcff;
+            margin-bottom: 32px;
+            text-shadow: 0 0 8px #00ffff44;
+        }
+        .menu-button, .level-button {
+            width: 100%;
+            padding: 12px 0;
+            margin: 7px 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            background: #001a1a;
+            color: #00ffff;
+            box-shadow: 0 0 12px 2px #00ffff55, 0 0 0 2px #00ffff44;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s, transform 0.1s;
+            cursor: pointer;
+            outline: none;
+        }
+        .menu-button:hover, .level-button:hover, .color-option.selected {
+            background: #00ffff;
+            color: #001a1a;
+            box-shadow: 0 0 24px 4px #00ffffcc, 0 0 0 2px #00ffff;
+            transform: scale(1.04);
+        }
+        .level-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin: 18px 0 10px 0;
+        }
+        .form-group {
+            margin-bottom: 18px;
+            width: 100%;
+        }
+        .form-group label {
+            font-size: 1rem;
+            color: #00ffff;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .form-group input[type="text"] {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1.5px solid #00ffff99;
+            background: #001a1a;
+            color: #00ffff;
+            font-size: 1rem;
+            margin-top: 4px;
+            box-shadow: 0 0 8px #00ffff33;
+            outline: none;
+            transition: border 0.2s, box-shadow 0.2s;
+        }
+        .form-group input[type="text"]:focus {
+            border: 2px solid #00ffff;
+            box-shadow: 0 0 16px #00ffff99;
+        }
+        .color-options {
+            display: flex;
+            gap: 18px;
+            margin-top: 8px;
+        }
+        .color-option {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2.5px solid #00ffff44;
+            box-shadow: 0 0 12px 2px #00ffff33;
+            cursor: pointer;
+            outline: none;
+            transition: border 0.2s, box-shadow 0.2s, transform 0.1s;
+            position: relative;
+        }
+        .color-option.selected::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 18px;
+            height: 18px;
+            background: rgba(255,255,255,0.25);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 12px 2px #fff;
+        }
+        .color-option.selected {
+            border: 2.5px solid #00ffff;
+            box-shadow: 0 0 24px 4px #00ffffcc;
+            transform: scale(1.1);
+        }
+        select {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1.5px solid #00ffff99;
+            background: #001a1a;
+            color: #00ffff;
+            font-size: 1rem;
+            margin-top: 4px;
+            box-shadow: 0 0 8px #00ffff33;
+            outline: none;
+            transition: border 0.2s, box-shadow 0.2s;
+        }
+        select:focus {
+            border: 2px solid #00ffff;
+            box-shadow: 0 0 16px #00ffff99;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+  <script type="module" crossorigin src="/assets/index-CAWTCMpy.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="ui-container"></div>
+    <div id="menu-container">
+        <!-- Menu content will be dynamically populated -->
+    </div>
+</body>
+</html> 
