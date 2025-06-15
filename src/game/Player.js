@@ -8,8 +8,8 @@ export class Player {
         // Player properties
         this.height = 0.2; // Lowered further so user can't see over walls
         this.radius = 0.3;
-        this.normalSpeed = 8; // Reduced from 15
-        this.sprintSpeed = 15; // Reduced from 25
+        this.normalSpeed = 3; // Reduced from 15
+        this.sprintSpeed = 5; // Reduced from 25
         this.acceleration = 40; // Reduced from 50
         this.deceleration = 25; // Reduced from 30
         

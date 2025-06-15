@@ -10,7 +10,7 @@ export class Scanner {
         this.scanPoints = 75; // 15x15 grid for dense coverage
         this.maxDots = 100000;    // 4x larger pool for many scans
         this.dotLifetime = Infinity; // Never despawn
-        this.scanCost = 0;//MAKE 10
+        this.scanCost = 10;//MAKE 10
         this.scanCooldown = 0;//MAKE 0.5
         this.lastScanTime = 0;
         

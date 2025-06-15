@@ -32,7 +32,8 @@ export class MazeGenerator {
             ceiling: new THREE.MeshStandardMaterial({
                 color: theme?.ceiling?.color ?? 0x0a0a0a,
                 roughness: 0.8,
-                metalness: 0.1
+                metalness: 0.1,
+                side: THREE.DoubleSide // Make ceiling visible from both sides
             })
         };
         // Generate maze layout
@@ -123,9 +124,11 @@ export class MazeGenerator {
     }
     
     createCeiling(scene) {
+        // Increase ceiling size by 4x for better sky visibility
+        const ceilingSize = this.mazeSize * 4;
         const geometry = new THREE.PlaneGeometry(
-            this.mazeSize,
-            this.mazeSize
+            ceilingSize,
+            ceilingSize
         );
         const ceiling = new THREE.Mesh(geometry, this.materials.ceiling);
         ceiling.rotation.x = Math.PI / 2;
@@ -134,6 +137,7 @@ export class MazeGenerator {
             this.ceilingY,
             this.mazeSize / 2 - 0.5
         );
+        ceiling.receiveShadow = true;
         scene.add(ceiling);
     }
     

@@ -26,4 +26,22 @@ export const THEMES = {
         fog: { color: 0x113311, near: 12, far: 70 },
         uiAccent: '#44ff44',
     },
+    ice: {
+        name: 'Ice Cavern',
+        wall: { color: 0x88ccff },
+        floor: { color: 0x224466 },
+        ceiling: { color: 0x336699 },
+        ambientLight: { color: 0x88ccff, intensity: 1.2 },
+        fog: { color: 0x224466, near: 15, far: 80 },
+        uiAccent: '#88ccff',
+    },
+    void: {
+        name: 'Void Realm',
+        wall: { color: 0x440066 },
+        floor: { color: 0x220033 },
+        ceiling: { color: 0x330044 },
+        ambientLight: { color: 0x8800ff, intensity: 1.1 },
+        fog: { color: 0x220033, near: 20, far: 100 },
+        uiAccent: '#8800ff',
+    },
 }; 

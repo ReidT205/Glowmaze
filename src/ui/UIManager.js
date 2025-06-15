@@ -1,3 +1,5 @@
+import { THEMES } from '../game/themes.js';
+
 export class UIManager {
     constructor() {
         this.container = document.getElementById('ui-container');
@@ -316,7 +318,7 @@ export class UIManager {
             font-size: 16px;
             text-align: center;
         `;
-        text.textContent = 'WASD to move | Mouse to look | SPACE to scan | Shift to sprint';
+        text.textContent = 'move = WASD| look = Mouse | scan = Space | sprint = Shift | pause = ESC | enlarge minimap = M';
         this.container.appendChild(text);
         return text;
     }
@@ -326,6 +328,10 @@ export class UIManager {
         
         const ctx = this.minimapCanvas.getContext('2d');
         const cellSize = this.minimapCanvas.width / mazeLayout.length;
+        
+        // Get theme accent color
+        const theme = THEMES[window.game.gameState.currentTheme];
+        const accentColor = theme ? theme.uiAccent : '#00ffff';
         
         // Clear canvas with black background
         ctx.fillStyle = '#000000';
@@ -397,6 +403,23 @@ export class UIManager {
 
         // Restore context state
         ctx.restore();
+
+        // Draw direction indicator
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(
+            playerX + cellSize / 2,
+            playerZ + cellSize / 2
+        );
+        ctx.lineTo(
+            playerX + cellSize / 2 + Math.cos(this.camera.rotation.y) * cellSize,
+            playerZ + cellSize / 2 + Math.sin(this.camera.rotation.y) * cellSize
+        );
+        ctx.stroke();
+        
+        // Add glow effect using theme color
+        this.minimapCanvas.style.boxShadow = `0 0 20px ${accentColor}44`;
     }
     
     toggleMinimapSize() {

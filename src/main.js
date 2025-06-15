@@ -41,6 +41,9 @@ class Game {
         this.isSpacePressed = false;
         this.isMinimapExpanded = false;
         
+        // Track if game has been started
+        this.gameStarted = false;
+        
         // Setup event listeners
         window.addEventListener('resize', this.onWindowResize);
         window.addEventListener('keydown', (e) => {
@@ -128,8 +131,12 @@ class Game {
         // Start game loop
         this.animate();
         
+        // Set initial theme
         this.currentThemeKey = 'lab';
         this.currentTheme = THEMES[this.currentThemeKey];
+        
+        // Make game instance globally accessible
+        window.game = this;
     }
     
     setupScene() {
@@ -140,17 +147,32 @@ class Game {
             0.1,
             1000
         );
-        // Place camera at center and above the floor by default
-        this.camera.position.set(10, 1.6, 10); // Center of 20x20 maze
-        this.camera.lookAt(new THREE.Vector3(10, 1.6, 12)); // Look down Z axis
+        
+        // Create renderer
         this.renderer = new THREE.WebGLRenderer({
-            antialias: false,
+            antialias: true,
             powerPreference: 'high-performance'
         });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setClearColor(0x000000);
-        document.getElementById('game-container').appendChild(this.renderer.domElement);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        
+        // Add renderer to DOM
+        const container = document.getElementById('game-container');
+        if (container) {
+            container.appendChild(this.renderer.domElement);
+        }
+
+        // Increase sky element size by 4x for better immersion and visual impact
+        const skyGeometry = new THREE.SphereGeometry(400, 32, 32);
+        const skyMaterial = new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            side: THREE.BackSide
+        });
+        const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+        this.scene.add(sky);
     }
     
     setupLights() {
@@ -166,6 +188,15 @@ class Game {
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
         dirLight.position.set(10, 20, 10);
         dirLight.target.position.set(10, 0, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048; 
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 50;
+        dirLight.shadow.camera.left = -20;
+        dirLight.shadow.camera.right = 20;
+        dirLight.shadow.camera.top = 20;
+        dirLight.shadow.camera.bottom = -20;
         this.scene.add(dirLight);
         this.scene.add(dirLight.target);
         // Fog
@@ -178,7 +209,7 @@ class Game {
         
         // Add click-to-start functionality
         document.addEventListener('click', () => {
-            if (!this.gameState.isPaused && !document.pointerLockElement) {
+            if (this.gameStarted && !this.gameState.isPaused && !document.pointerLockElement) {
                 this.controls.lock();
             }
         });
@@ -271,6 +302,11 @@ class Game {
         }
     }
     
+    getThemeForLevel(level) {
+        const themes = ['lab', 'crypt', 'forest', 'ice', 'void'];
+        return THEMES[themes[level - 1]];
+    }
+    
     startGame(level, customization) {
         // Clear existing scene
         this.clearSceneExceptCamera();
@@ -278,6 +314,13 @@ class Game {
         // Reset game state
         this.gameState.reset();
         this.gameState.currentLevel = level;
+        
+        // Set game as started
+        this.gameStarted = true;
+        
+        // Set theme based on level
+        this.currentTheme = this.getThemeForLevel(level);
+        this.gameState.currentTheme = Object.keys(THEMES)[level - 1];
         
         // Apply customization
         if (customization) {
@@ -288,6 +331,9 @@ class Game {
             );
             this.playerColor = this.getColorHexFromSkin(customization.skin);
         }
+        
+        // Setup lights with new theme
+        this.setupLights();
         
         // Generate new maze
         this.mazeGenerator.generateMaze(this.scene, this.currentTheme, level);

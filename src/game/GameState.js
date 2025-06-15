@@ -7,6 +7,12 @@ export class GameState {
         this.score = 0;
         this.currentTheme = 'lab';
         
+        // Time tracking
+        this.startTime = null;
+        this.elapsedTime = 0;
+        this.lastUpdateTime = null;
+        this.isTimerRunning = false;
+        
         // Player state
         this.playerHealth = 100;
         this.playerEnergy = 100;
@@ -36,12 +42,41 @@ export class GameState {
         this.score = 0;
         this.playerHealth = 100;
         this.playerEnergy = 100;
+        this.startTime = Date.now();
+        this.lastUpdateTime = this.startTime;
+        this.elapsedTime = 0;
+        this.isTimerRunning = true;
     }
     
     updateMetrics(fps, markerCount, renderTime) {
         this.metrics.fps = fps;
         this.metrics.markerCount = markerCount;
         this.metrics.renderTime = renderTime;
+        
+        // Update elapsed time only if timer is running
+        if (this.isTimerRunning && !this.isPaused && !this.isGameOver) {
+            const now = Date.now();
+            this.elapsedTime += (now - this.lastUpdateTime) / 1000; // Convert to seconds
+            this.lastUpdateTime = now;
+        }
+    }
+    
+    pauseTimer() {
+        this.isTimerRunning = false;
+    }
+    
+    resumeTimer() {
+        if (!this.isTimerRunning) {
+            this.lastUpdateTime = Date.now();
+            this.isTimerRunning = true;
+        }
+    }
+    
+    getFormattedTime() {
+        const totalSeconds = Math.floor(this.elapsedTime);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
     
     takeDamage(amount) {
