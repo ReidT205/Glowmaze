@@ -63,15 +63,34 @@ export class Scanner {
     scan(camera, gameState) {
         const now = performance.now() / 1000;
         if (now - this.lastScanTime < this.scanCooldown) return;
+        if (gameState.playerEnergy < this.scanCost) return;
+        // Use energy
         if (!gameState.useEnergy(this.scanCost)) return;
         this.lastScanTime = now;
-
+        // Play scanner sound
+        if (window.game.soundManager) {
+            window.game.soundManager.playScannerSound();
+        }
+        // Create scan line
+        this.createScanLine();
+        // Check for enemies in scan range
+        const enemies = window.game.enemyManager.getEnemies();
+        for (const enemy of enemies) {
+            const distance = enemy.position.distanceTo(camera.position);
+            if (distance < 5) { // 5 unit scan range
+                // Deal damage to enemy
+                window.game.enemyManager.damageEnemy(enemy, 10);
+                // Play monster detect sound
+                if (window.game.soundManager) {
+                    window.game.soundManager.playMonsterDetectSound();
+                }
+            }
+        }
         // Find all maze geometry (walls, floor, ceiling)
         const mazeObjects = this.scene.children.filter(obj =>
             obj.userData.type === 'wall' || obj.userData.type === 'floor' || obj.userData.type === 'ceiling'
         );
         if (mazeObjects.length === 0) return;
-
         // Generate random scan points in a cone in front of the camera
         this.pendingDots = [];
         const scanWidth = 6;

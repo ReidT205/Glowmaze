@@ -16,9 +16,9 @@ export class GameState {
         // Player state
         this.playerHealth = 100;
         this.playerEnergy = 100;
-        this.playerName = '';
+        this.playerName = 'Your Name';
         this.playerSkin = 'cyan';
-        this.scannerType = 'standard';
+        this.scannerType = 'basic';
         
         // Game settings
         this.settings = {
@@ -30,10 +30,14 @@ export class GameState {
         
         // Performance metrics
         this.metrics = {
-            fps: 0,
+            fps: 60,
             markerCount: 0,
             renderTime: 0
         };
+        
+        this.monsterProximity = false;
+        this.pausedTime = 0;
+        this.isTimerPaused = false;
     }
     
     reset() {
@@ -115,5 +119,10 @@ export class GameState {
     update(deltaTime) {
         // Regenerate scanner energy slowly
         this.regenerateEnergy(deltaTime * 5); // 5 units per second
+        
+        // Regenerate health slowly if not at max
+        if (this.playerHealth < 100) {
+            this.playerHealth = Math.min(100, this.playerHealth + deltaTime * 2); // 2 health per second
+        }
     }
 } 

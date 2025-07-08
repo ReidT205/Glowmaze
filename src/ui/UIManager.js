@@ -420,6 +420,39 @@ export class UIManager {
         
         // Add glow effect using theme color
         this.minimapCanvas.style.boxShadow = `0 0 20px ${accentColor}44`;
+        
+        // Draw enemy positions (always visible)
+        const enemyPositions = window.game.enemyManager.getEnemyPositions();
+        for (const enemy of enemyPositions) {
+            const x = enemy.x;
+            const z = enemy.z;
+            
+            // Always draw enemy positions, even in unexplored areas
+            ctx.beginPath();
+            ctx.arc(x * cellSize + cellSize/2, z * cellSize + cellSize/2, cellSize/2, 0, Math.PI * 2); // Increased size
+            
+            // Different colors for different enemy types
+            switch(enemy.type) {
+                case 'BasicStalker':
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.9)'; // Red, more opaque
+                    break;
+                case 'PackHunter':
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.9)'; // Green, more opaque
+                    break;
+                case 'Ambusher':
+                    ctx.fillStyle = 'rgba(0, 0, 255, 0.9)'; // Blue, more opaque
+                    break;
+                default:
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+            }
+            
+            // Add pulsing glow effect
+            const pulseIntensity = 0.5 + Math.sin(Date.now() / 200) * 0.3;
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 10 * pulseIntensity; // Increased glow
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
     }
     
     toggleMinimapSize() {
@@ -556,15 +589,42 @@ export class UIManager {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.8);
-            padding: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 30px;
             border: 2px solid #ff0040;
-            border-radius: 10px;
+            border-radius: 15px;
             color: #ff0040;
-            font-size: 32px;
+            font-size: 24px;
             text-align: center;
+            min-width: 300px;
+            box-shadow: 0 0 20px #ff0040;
         `;
-        gameOver.textContent = 'GAME OVER';
+
+        // Calculate time played
+        const timePlayed = Math.floor((Date.now() - window.game.gameState.startTime) / 1000);
+        const minutes = Math.floor(timePlayed / 60);
+        const seconds = timePlayed % 60;
+
+        // Get game stats
+        const stats = {
+            score: window.game.gameState.score,
+            timePlayed: `${minutes}m ${seconds}s`,
+            enemiesKilled: window.game.enemyManager.getEnemiesKilled(),
+            level: window.game.gameState.currentLevel,
+            playerName: window.game.gameState.playerName
+        };
+
+        // Create stats display
+        gameOver.innerHTML = `
+            <div style="font-size: 36px; margin-bottom: 20px; text-shadow: 0 0 10px #ff0040;">GAME OVER</div>
+            <div style="color: #ffffff; margin-bottom: 15px;">Player: ${stats.playerName}</div>
+            <div style="color: #ffffff; margin-bottom: 15px;">Level: ${stats.level}</div>
+            <div style="color: #ffffff; margin-bottom: 15px;">Score: ${stats.score}</div>
+            <div style="color: #ffffff; margin-bottom: 15px;">Time Survived: ${stats.timePlayed}</div>
+            <div style="color: #ffffff; margin-bottom: 20px;">Enemies Defeated: ${stats.enemiesKilled}</div>
+            <div style="color: #ff0040; font-size: 18px; margin-top: 20px;">Press ESC to return to menu</div>
+        `;
+
         this.container.appendChild(gameOver);
     }
     

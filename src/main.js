@@ -337,7 +337,8 @@ class Game {
         
         // Generate new maze
         this.mazeGenerator.generateMaze(this.scene, this.currentTheme, level);
-        
+        // Ensure enemies spawn by setting maze layout
+        this.enemyManager.setMazeLayout(this.mazeGenerator.getMazeLayout());
         // Initialize discovered array with only spawn point visible
         const size = this.mazeGenerator.mazeSize;
         this.discovered = Array(size).fill().map(() => Array(size).fill(false));
