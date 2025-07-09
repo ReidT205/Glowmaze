@@ -1,17 +1,42 @@
 import * as THREE from 'three';
 
 export class Scanner {
-    constructor(scene, getPlayerColor, camera) {
+    constructor(scene, getPlayerColor, camera, initialType = 'standard') {
         this.scene = scene;
         this.getPlayerColor = getPlayerColor; // function to get current player color
         this.camera = camera;
         
+        // --- Scanner type definitions ---
+        this.scannerTypes = {
+            focused: {
+                scanPoints: 40,
+                scanWidth: 2.5,
+                scanHeight: 1.2,
+                scanCost: 7,
+                scanCooldown: 0.3
+            },
+            standard: {
+                scanPoints: 75,
+                scanWidth: 6,
+                scanHeight: 2.5,
+                scanCost: 10,
+                scanCooldown: 0.5
+            },
+            wide: {
+                scanPoints: 120,
+                scanWidth: 12,
+                scanHeight: 4.5,
+                scanCost: 18,
+                scanCooldown: 0.7
+            }
+        };
+        this.scannerTypeOrder = ['focused', 'standard', 'wide'];
+        this.currentScannerType = initialType;
+        this.applyScannerType(initialType);
+        
         // Game-appropriate parameters
-        this.scanPoints = 75; // 15x15 grid for dense coverage
         this.maxDots = 100000;    // 4x larger pool for many scans
         this.dotLifetime = Infinity; // Never despawn
-        this.scanCost = 10;//MAKE 10
-        this.scanCooldown = 0;//MAKE 0.5
         this.lastScanTime = 0;
         
         // Create a dedicated group for dots that will be added to the scene
@@ -59,8 +84,37 @@ export class Scanner {
         line.visible = false;
         return line;
     }
+
+    applyScannerType(type) {
+        const t = this.scannerTypes[type] || this.scannerTypes['standard'];
+        this.scanPoints = t.scanPoints;
+        this.scanWidth = t.scanWidth;
+        this.scanHeight = t.scanHeight;
+        this.scanCost = t.scanCost;
+        this.scanCooldown = t.scanCooldown;
+        this.currentScannerType = type;
+    }
+
+    cycleScannerType(gameState) {
+        // Deduct energy for switching (e.g., 15 units)
+        const switchCost = 15;
+        if (gameState.playerEnergy < switchCost) return false;
+        if (!gameState.useEnergy(switchCost)) return false;
+        const idx = this.scannerTypeOrder.indexOf(this.currentScannerType);
+        const nextIdx = (idx + 1) % this.scannerTypeOrder.length;
+        const nextType = this.scannerTypeOrder[nextIdx];
+        this.applyScannerType(nextType);
+        // Optionally play a sound here
+        return true;
+    }
+
+    getCurrentScannerType() {
+        return this.currentScannerType;
+    }
     
     scan(camera, gameState) {
+        // Guard: only scan if maze and enemyManager are ready
+        if (!window.game || !window.game.enemyManager || !window.game.mazeGenerator || !window.game.mazeGenerator.layout) return;
         const now = performance.now() / 1000;
         if (now - this.lastScanTime < this.scanCooldown) return;
         if (gameState.playerEnergy < this.scanCost) return;
@@ -73,19 +127,9 @@ export class Scanner {
         }
         // Create scan line
         this.createScanLine();
-        // Check for enemies in scan range
+        // --- New: Damage enemies based on dot hits ---
         const enemies = window.game.enemyManager.getEnemies();
-        for (const enemy of enemies) {
-            const distance = enemy.position.distanceTo(camera.position);
-            if (distance < 5) { // 5 unit scan range
-                // Deal damage to enemy
-                window.game.enemyManager.damageEnemy(enemy, 10);
-                // Play monster detect sound
-                if (window.game.soundManager) {
-                    window.game.soundManager.playMonsterDetectSound();
-                }
-            }
-        }
+        const enemyHits = new Map(); // enemy -> hit count
         // Find all maze geometry (walls, floor, ceiling)
         const mazeObjects = this.scene.children.filter(obj =>
             obj.userData.type === 'wall' || obj.userData.type === 'floor' || obj.userData.type === 'ceiling'
@@ -93,8 +137,8 @@ export class Scanner {
         if (mazeObjects.length === 0) return;
         // Generate random scan points in a cone in front of the camera
         this.pendingDots = [];
-        const scanWidth = 6;
-        const scanHeight = 2.5;
+        const scanWidth = this.scanWidth;
+        const scanHeight = this.scanHeight;
         for (let i = 0; i < this.scanPoints; i++) {
             // Random point in a cone
             const angle = (Math.random() - 0.5) * Math.PI / 3;
@@ -112,6 +156,14 @@ export class Scanner {
                     normal: hit.face.normal.clone(),
                     y: hit.point.y
                 });
+                // Check for enemy hit at this dot position
+                for (const enemy of enemies) {
+                    if (!enemy.mesh || !enemy.position || enemy.properties.health <= 0) continue;
+                    // Use a hit radius (0.4)
+                    if (hit.point.distanceTo(enemy.position) < 0.4) {
+                        enemyHits.set(enemy, (enemyHits.get(enemy) || 0) + 1);
+                    }
+                }
             }
         }
         // Start scan animation instantly
@@ -122,6 +174,18 @@ export class Scanner {
         for (let i = this.pendingDots.length - 1; i >= 0; i--) {
             this.placeDot(this.pendingDots[i].position, this.pendingDots[i].normal);
             this.pendingDots.splice(i, 1);
+        }
+        // Apply damage to enemies proportional to hits
+        let anyHit = false;
+        for (const [enemy, hits] of enemyHits.entries()) {
+            if (hits > 0) {
+                anyHit = true;
+                // Each dot does 1 damage
+                window.game.enemyManager.damageEnemy(enemy, hits);
+            }
+        }
+        if (anyHit && window.game.soundManager) {
+            window.game.soundManager.playMonsterDetectSound();
         }
     }
     
@@ -206,5 +270,16 @@ export class Scanner {
     
     getActiveDotCount() {
         return this.activeDots.length;
+    }
+
+    reset() {
+        // Properly clear all scanner state
+        this.pendingDots = [];
+        this.activeDots = [];
+        this.dotPool.forEach(dot => { dot.visible = false; });
+        this.lastScanTime = 0;
+        this.scanLine.visible = false;
+        this.isScanning = false;
+        this.scanProgress = 0;
     }
 } 

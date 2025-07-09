@@ -205,6 +205,14 @@ export class MenuManager {
                         <span class="stat-label">Time</span>
                         <span class="stat-value" id="pause-time">00:00</span>
                     </div>
+                    <div class="stat">
+                        <span class="stat-label">Enemies Defeated</span>
+                        <span class="stat-value" id="pause-enemies-killed">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Damage Dealt</span>
+                        <span class="stat-value" id="pause-damage-dealt">0</span>
+                    </div>
                 </div>
                 
                 <div class="button-container">
@@ -348,6 +356,8 @@ export class MenuManager {
             document.getElementById('pause-level').textContent = gameState.currentLevel;
             document.getElementById('pause-score').textContent = gameState.score;
             document.getElementById('pause-time').textContent = gameState.getFormattedTime();
+            document.getElementById('pause-enemies-killed').textContent = window.game.enemyManager.getEnemiesKilled();
+            document.getElementById('pause-damage-dealt').textContent = window.game.enemyManager.getTotalDamageDealt();
         }
     }
     

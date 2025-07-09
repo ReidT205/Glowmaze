@@ -610,6 +610,7 @@ export class UIManager {
             score: window.game.gameState.score,
             timePlayed: `${minutes}m ${seconds}s`,
             enemiesKilled: window.game.enemyManager.getEnemiesKilled(),
+            damageDealt: window.game.enemyManager.getTotalDamageDealt(),
             level: window.game.gameState.currentLevel,
             playerName: window.game.gameState.playerName
         };
@@ -621,7 +622,8 @@ export class UIManager {
             <div style="color: #ffffff; margin-bottom: 15px;">Level: ${stats.level}</div>
             <div style="color: #ffffff; margin-bottom: 15px;">Score: ${stats.score}</div>
             <div style="color: #ffffff; margin-bottom: 15px;">Time Survived: ${stats.timePlayed}</div>
-            <div style="color: #ffffff; margin-bottom: 20px;">Enemies Defeated: ${stats.enemiesKilled}</div>
+            <div style="color: #ffffff; margin-bottom: 15px;">Enemies Defeated: ${stats.enemiesKilled}</div>
+            <div style="color: #ffffff; margin-bottom: 20px;">Total Damage Dealt: ${stats.damageDealt}</div>
             <div style="color: #ff0040; font-size: 18px; margin-top: 20px;">Press ESC to return to menu</div>
         `;
 

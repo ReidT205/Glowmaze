@@ -8,10 +8,11 @@ export class EnemyManager {
         this.enemies = [];
         this.mazeLayout = null;
         this.enemiesKilled = 0;
+        this.totalDamageDealt = 0; // Track total damage dealt
         
         // Enemy properties
         this.enemyProperties = {
-            health: 50,
+            health: 20,
             detectionRange: 5,
             movementSpeed: 0.02,
             damage: 10, // Increased damage
@@ -20,7 +21,7 @@ export class EnemyManager {
         
         // Spawn settings
         this.spawnSettings = {
-            maxEnemies: 15, // Increased from 10
+            maxEnemies: 99999, // No practical limit
             spawnInterval: 15, // Reduced from 30 seconds
             lastSpawnTime: 0,
             packSize: 3,
@@ -28,21 +29,51 @@ export class EnemyManager {
         };
     }
 
-    setMazeLayout(layout) {
+    setMazeLayout(layout, playerPosition = null) {
         this.mazeLayout = layout;
-        // Spawn initial enemies when maze is set
-        this.spawnInitialEnemies();
+        // Spawn initial enemies when maze is set, using player position for safe zone
+        this.spawnInitialEnemies(playerPosition);
     }
 
-    spawnInitialEnemies() {
+    spawnInitialEnemies(playerPosition = null) {
         if (!this.mazeLayout) return;
 
         const size = this.mazeLayout.length;
-        const enemyCount = Math.min(10, this.spawnSettings.maxEnemies); // Increased from 5
-
+        const enemyCount = Math.min(5, this.spawnSettings.maxEnemies); // Lowered to 5 for smoother start
+        // Use center if no playerPosition provided
+        const safePos = playerPosition || new THREE.Vector3(size/2, 0, size/2);
         for (let i = 0; i < enemyCount; i++) {
-            // Find a random valid position in the maze
-            const position = this.findValidSpawnPosition(new THREE.Vector3(size/2, 0, size/2));
+            // Find a random valid position in the maze, not near player (use larger safe zone for initial spawn)
+            let position = this.findValidSpawnPosition(safePos, true, 10); // 10 units for initial spawn
+            // Fallback: never spawn within 2 units of player
+            if (!position) {
+                // Try to find any valid path cell at least 2 units away
+                for (let x = 0; x < size; x++) {
+                    for (let z = 0; z < size; z++) {
+                        if (this.mazeLayout[x][z] === 0) {
+                            const pos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
+                            if (pos.distanceTo(safePos) > 2) {
+                                position = pos;
+                                break;
+                            }
+                        }
+                    }
+                    if (position) break;
+                }
+                if (!position) {
+                    // As a last resort, pick any valid cell (should never happen)
+                    for (let x = 0; x < size; x++) {
+                        for (let z = 0; z < size; z++) {
+                            if (this.mazeLayout[x][z] === 0) {
+                                position = new THREE.Vector3(x + 0.5, 0, z + 0.5);
+                                console.warn('Enemy forced to spawn close to player:', position, 'player:', safePos);
+                                break;
+                            }
+                        }
+                        if (position) break;
+                    }
+                }
+            }
             if (!position) continue;
 
             // Randomly choose enemy type with weighted distribution
@@ -55,46 +86,53 @@ export class EnemyManager {
             } else {
                 type = 'Ambusher';
             }
-            
             this.spawnEnemy(position, type);
         }
     }
     
-    findValidSpawnPosition(playerPosition) {
+    // minDistanceOverride allows us to set a custom minimum distance for special cases
+    findValidSpawnPosition(playerPosition, enforceSafeZone = false, minDistanceOverride = null) {
         if (!this.mazeLayout) return null;
 
         const size = this.mazeLayout.length;
-        const maxAttempts = 100; // Increased from 50
+        const maxAttempts = 200;
         let attempts = 0;
-
+        // Use override if provided, else use normal logic
+        const minDistance = minDistanceOverride !== null ? minDistanceOverride : (enforceSafeZone ? 7 : this.enemyProperties.spawnDistance);
+        // Center 3x3 forbidden zone
+        const forbiddenZone = [];
+        const center = Math.floor(size / 2);
+        for (let x = center - 1; x <= center + 1; x++) {
+            for (let z = center - 1; z <= center + 1; z++) {
+                forbiddenZone.push(`${x},${z}`);
+            }
+        }
         while (attempts < maxAttempts) {
-            // Generate random position within maze bounds
             const x = Math.floor(Math.random() * size);
             const z = Math.floor(Math.random() * size);
-
-            // Check if position is a valid path (0) and not too close to player
             if (this.mazeLayout[x][z] === 0) {
                 const spawnPos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
                 const distanceToPlayer = spawnPos.distanceTo(playerPosition);
-                
-                // Ensure minimum distance from player but not too far
-                if (distanceToPlayer > this.enemyProperties.spawnDistance && 
-                    distanceToPlayer < this.enemyProperties.spawnDistance * 2) {
+                // Not in forbidden zone
+                if (!forbiddenZone.includes(`${x},${z}`) && distanceToPlayer > minDistance && distanceToPlayer < this.enemyProperties.spawnDistance * 2) {
                     return spawnPos;
                 }
             }
             attempts++;
         }
-
-        // If no valid position found, try any valid path position
+        // Fallback: try any valid path cell outside forbidden zone
         for (let x = 0; x < size; x++) {
             for (let z = 0; z < size; z++) {
                 if (this.mazeLayout[x][z] === 0) {
-                    return new THREE.Vector3(x + 0.5, 0, z + 0.5);
+                    if (!forbiddenZone.includes(`${x},${z}`)) {
+                        const pos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
+                        if (!enforceSafeZone || pos.distanceTo(playerPosition) > minDistance) {
+                            return pos;
+                        }
+                    }
                 }
             }
         }
-
         return null;
     }
     
@@ -104,8 +142,8 @@ export class EnemyManager {
             return;
         }
 
-        // Find valid spawn position
-        const position = this.findValidSpawnPosition(playerPosition);
+        // For periodic spawns, enforce a safe zone of at least 7 units
+        const position = this.findValidSpawnPosition(playerPosition, true, 7);
         if (!position) return;
 
         let enemy;
@@ -114,7 +152,7 @@ export class EnemyManager {
                 // Spawn a pack of hunters
                 for (let i = 0; i < this.spawnSettings.packSize; i++) {
                     // Find valid position for each pack member
-                    const packPosition = this.findValidSpawnPosition(position);
+                    const packPosition = this.findValidSpawnPosition(position, true, 7);
                     if (!packPosition) continue;
 
                     enemy = new PackHunter(
@@ -238,7 +276,6 @@ export class EnemyManager {
             } else {
                 type = 'Ambusher';
             }
-            
             this.spawnEnemy(playerPosition, type);
             this.spawnSettings.lastSpawnTime = currentTime;
         }
@@ -249,13 +286,16 @@ export class EnemyManager {
             enemy.update(deltaTime, playerPosition, scanner, this.mazeLayout);
 
             // Check for player damage
-            if (enemy.state === 'attack' && enemy.position.distanceTo(playerPosition) < 1.5) {
-                player.takeDamage(enemy.properties.damage * deltaTime);
+            if (enemy.state === 'attack' && enemy.position.distanceTo(playerPosition) < 1.5 && enemy._readyToAttack) {
+                player.takeDamage(enemy.properties.damage);
             }
 
             // Remove dead enemies
             if (enemy.properties.health <= 0) {
                 this.enemiesKilled++;
+                if (enemy.mesh) {
+                    this.scene.remove(enemy.mesh);
+                }
                 this.enemies.splice(i, 1);
             }
         }
@@ -275,19 +315,43 @@ export class EnemyManager {
         return false;
     }
     
-    damageEnemy(enemy, amount) {
-        enemy.properties.health -= amount;
-        
-        // Apply knockback
-        const knockbackForce = 0.5;
-        const randomDirection = new THREE.Vector3(
-            Math.random() - 0.5,
-            0,
-            Math.random() - 0.5
-        ).normalize();
-        
-        enemy.position.add(randomDirection.multiplyScalar(knockbackForce));
+    // --- BEGIN: Refactored enemy damage and death logic ---
+    /**
+     * Returns only live enemies (health > 0)
+     */
+    getEnemies() {
+        // Filter out dead enemies just in case
+        this.enemies = this.enemies.filter(e => e && e.properties.health > 0);
+        return this.enemies;
     }
+
+    /**
+     * Damages an enemy if it is alive. If it dies, remove it from all arrays and scene.
+     * Each call is guaranteed to subtract the correct amount of health.
+     */
+    damageEnemy(enemy, amount) {
+        if (!enemy || enemy.properties.health <= 0) return;
+        const before = enemy.properties.health;
+        enemy.properties.health -= amount;
+        this.totalDamageDealt += amount; // Increment total damage dealt
+        console.log(`Enemy hit: type=${enemy.type}, before=${before}, damage=${amount}, after=${enemy.properties.health}`);
+        // If dead, remove from scene and arrays
+        if (enemy.properties.health <= 0) {
+            this.enemiesKilled++;
+            if (enemy.mesh && enemy.mesh.parent) {
+                enemy.mesh.parent.remove(enemy.mesh);
+            }
+            // Remove from this.enemies
+            this.enemies = this.enemies.filter(e => e !== enemy);
+            // Remove from otherEnemies arrays (for PackHunter)
+            for (const e of this.enemies) {
+                if (e.otherEnemies && Array.isArray(e.otherEnemies)) {
+                    e.otherEnemies = e.otherEnemies.filter(o => o !== enemy);
+                }
+            }
+        }
+    }
+    // --- END: Refactored enemy damage and death logic ---
     
     getEnemyCount() {
         return this.enemies.length;
@@ -310,11 +374,10 @@ export class EnemyManager {
         this.enemies = [];
     }
     
-    getEnemies() {
-        return this.enemies;
-    }
-
     getEnemiesKilled() {
         return this.enemiesKilled;
+    }
+    getTotalDamageDealt() {
+        return this.totalDamageDealt;
     }
 }

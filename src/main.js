@@ -23,8 +23,13 @@ class Game {
         this.mazeGenerator = new MazeGenerator();
         // Store player color (default cyan)
         this.playerColor = 0x00ffff;
+        // --- Scanner type from customization (default to 'standard') ---
+        let initialScannerType = 'standard';
+        if (window.localStorage && window.localStorage.getItem('lastScannerType')) {
+            initialScannerType = window.localStorage.getItem('lastScannerType');
+        }
         this.player = new Player(this.scene, this.camera);
-        this.scanner = new Scanner(this.scene, () => this.playerColor, this.camera);
+        this.scanner = new Scanner(this.scene, () => this.playerColor, this.camera, initialScannerType);
         this.enemyManager = new EnemyManager(this.scene);
         this.uiManager = new UIManager();
         this.uiManager.setCamera(this.camera);
@@ -62,6 +67,22 @@ class Game {
             // Add minimap expansion key (M)
             if (e.key.toLowerCase() === 'm' && !this.gameState.isPaused) {
                 this.uiManager.toggleMinimapSize();
+            }
+            // --- Scanner type switch hotkey (Q) ---
+            if (e.key.toLowerCase() === 'q' && !this.gameState.isPaused) {
+                const switched = this.scanner.cycleScannerType(this.gameState);
+                if (switched) {
+                    // Optionally play a sound
+                    if (this.soundManager) {
+                        this.soundManager.playMenuClickSound();
+                    }
+                    // Optionally update UI to show scanner type
+                    // this.uiManager.setScannerType(this.scanner.getCurrentScannerType());
+                    // Save last scanner type for next session
+                    if (window.localStorage) {
+                        window.localStorage.setItem('lastScannerType', this.scanner.getCurrentScannerType());
+                    }
+                }
             }
         });
         window.addEventListener('keyup', (e) => {
@@ -234,7 +255,7 @@ class Game {
     
     update(deltaTime) {
         this.gameState.update(deltaTime); // Ensure scanner resource bar refills
-        if (!this.gameState.isPaused) {
+        if (!this.gameState.isPaused && !this.gameState.isGameOver) {
             this.player.update(deltaTime, this.inputManager);
             this.scanner.update(deltaTime);
             this.enemyManager.update(deltaTime, this.player, this.scanner);
@@ -253,37 +274,49 @@ class Game {
             }
             this.uiManager.updateMinimap(mazeLayout, this.discovered, playerMazePos, colorStr);
         }
+        // Show game over screen if player is dead
+        if (this.gameState.isGameOver && !this._gameOverShown) {
+            this._gameOverShown = true;
+            this.uiManager.showGameOver();
+            this.soundManager.playGameOverSound();
+            // Optionally, pause input or stop animation loop here
+        }
     }
     
     animate() {
         requestAnimationFrame(this.animate);
         if (!this.clock) this.clock = new THREE.Clock();
         const deltaTime = this.clock.getDelta();
-
-        // --- Performance metrics ---
-        // FPS
-        const now = performance.now();
-        if (!this._lastFpsTime) this._lastFpsTime = now;
-        if (!this._frameCount) this._frameCount = 0;
-        this._frameCount++;
-        let fps = 0;
-        if (now - this._lastFpsTime > 250) { // update every 1/4 second
-            fps = (this._frameCount * 1000) / (now - this._lastFpsTime);
-            this._lastFpsTime = now;
-            this._frameCount = 0;
-            this._lastFps = fps;
+        // Only update if not game over
+        if (!this.gameState.isGameOver) {
+            // --- Performance metrics ---
+            // FPS
+            const now = performance.now();
+            if (!this._lastFpsTime) this._lastFpsTime = now;
+            if (!this._frameCount) this._frameCount = 0;
+            this._frameCount++;
+            let fps = 0;
+            if (now - this._lastFpsTime > 250) { // update every 1/4 second
+                fps = (this._frameCount * 1000) / (now - this._lastFpsTime);
+                this._lastFpsTime = now;
+                this._frameCount = 0;
+                this._lastFps = fps;
+            } else {
+                fps = this._lastFps || 60;
+            }
+            // Marker count
+            const markerCount = this.scanner.activeDots.length;
+            // Render time
+            const renderStart = performance.now();
+            this.update(deltaTime);
+            this.renderer.render(this.scene, this.camera);
+            const renderTime = performance.now() - renderStart;
+            // Update metrics on gameState
+            this.gameState.updateMetrics(fps, markerCount, renderTime);
         } else {
-            fps = this._lastFps || 60;
+            // If game over, still render the scene but do not update game logic
+            this.renderer.render(this.scene, this.camera);
         }
-        // Marker count
-        const markerCount = this.scanner.activeDots.length;
-        // Render time
-        const renderStart = performance.now();
-        this.update(deltaTime);
-        this.renderer.render(this.scene, this.camera);
-        const renderTime = performance.now() - renderStart;
-        // Update metrics on gameState
-        this.gameState.updateMetrics(fps, markerCount, renderTime);
     }
     
     handlePause() {
@@ -330,6 +363,13 @@ class Game {
                 customization.scannerType
             );
             this.playerColor = this.getColorHexFromSkin(customization.skin);
+            // Set scanner type from customization
+            if (customization.scannerType) {
+                this.scanner.applyScannerType(customization.scannerType);
+                if (window.localStorage) {
+                    window.localStorage.setItem('lastScannerType', customization.scannerType);
+                }
+            }
         }
         
         // Setup lights with new theme
@@ -337,17 +377,16 @@ class Game {
         
         // Generate new maze
         this.mazeGenerator.generateMaze(this.scene, this.currentTheme, level);
-        // Ensure enemies spawn by setting maze layout
-        this.enemyManager.setMazeLayout(this.mazeGenerator.getMazeLayout());
+        // Set player position
+        const spawnPos = this.mazeGenerator.getPlayerSpawnPosition();
+        this.camera.position.copy(spawnPos);
+        // Ensure enemies spawn by setting maze layout, passing player spawn position for safe zone
+        this.enemyManager.setMazeLayout(this.mazeGenerator.getMazeLayout(), spawnPos);
         // Initialize discovered array with only spawn point visible
         const size = this.mazeGenerator.mazeSize;
         this.discovered = Array(size).fill().map(() => Array(size).fill(false));
         const center = Math.floor(size / 2);
         this.discovered[center][center] = 'spawn';
-        
-        // Set player position
-        const spawnPos = this.mazeGenerator.getPlayerSpawnPosition();
-        this.camera.position.copy(spawnPos);
         
         // Reset scanner
         this.scanner.reset();
