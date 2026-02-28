@@ -6,17 +6,43 @@ export class EnemyManager {
     constructor(scene) {
         this.scene = scene;
         this.enemies = [];
+        this.pool = {
+            BasicStalker: [],
+            PackHunter: [],
+            Ambusher: []
+        };
         this.mazeLayout = null;
+        this.wallBoxes = [];
+        this.walkableCells = [];
+        this.safeSpawnCells = [];
+        this._spawnCursor = 0;
+        this._safeSpawnCursor = 0;
+        this._neighborCursor = 0;
+        this._mazeCenter = null;
         this.enemiesKilled = 0;
         this.totalDamageDealt = 0; // Track total damage dealt
+        
+        // Shared AI blackboard for simple squad/alert coordination
+        this.blackboard = {
+            alerts: [], // { position: THREE.Vector3, time: seconds, type: 'sighting'|'light' }
+            helpCooldown: 2.0,
+            lastAlertTime: 0,
+            maxAge: 8.0
+        };
         
         // Enemy properties
         this.enemyProperties = {
             health: 20,
             detectionRange: 5,
-            movementSpeed: 0.02,
+            movementSpeed: 1.8,
             damage: 10, // Increased damage
-            spawnDistance: 8
+            spawnDistance: 8,
+            usePathfinding: true
+        };
+        this.enemySpeed = {
+            basic: 1.8,
+            pack: 2.4,
+            ambusher: 3
         };
         
         // Spawn settings
@@ -31,6 +57,32 @@ export class EnemyManager {
 
     setMazeLayout(layout, playerPosition = null) {
         this.mazeLayout = layout;
+        // Cache wall objects once to avoid scanning scene every frame per enemy
+        this.wallObjects = this.scene.children.filter(obj => obj.userData && obj.userData.type === 'wall');
+        this.wallBoxes = this.wallObjects.map(obj => new THREE.Box3().setFromObject(obj));
+
+        const cellData = this._buildWalkableCells(layout);
+        this.walkableCells = cellData.walkable;
+        this.safeSpawnCells = cellData.safe;
+        this._spawnCursor = 0;
+        this._safeSpawnCursor = 0;
+        this._neighborCursor = 0;
+
+        if (layout && layout.length) {
+            const centerIndex = Math.floor(layout.length / 2);
+            this._mazeCenter = new THREE.Vector3(centerIndex, 0, centerIndex);
+        } else {
+            this._mazeCenter = null;
+        }
+
+        for (const enemy of this.enemies) {
+            if (!enemy) continue;
+            enemy.wallObjects = this.wallObjects;
+            enemy.wallBoxes = this.wallBoxes;
+        }
+        if (window?.game?.scanner?.setStaticGeometry) {
+            window.game.scanner.setStaticGeometry(this.wallObjects);
+        }
         // Spawn initial enemies when maze is set, using player position for safe zone
         this.spawnInitialEnemies(playerPosition);
     }
@@ -40,39 +92,13 @@ export class EnemyManager {
 
         const size = this.mazeLayout.length;
         const enemyCount = Math.min(5, this.spawnSettings.maxEnemies); // Lowered to 5 for smoother start
-        // Use center if no playerPosition provided
-        const safePos = playerPosition || new THREE.Vector3(size/2, 0, size/2);
+        // Use cached maze center if we do not have a player position yet
+        const centerIndex = Math.floor(size / 2);
+        const safePos = playerPosition || this._mazeCenter || new THREE.Vector3(centerIndex, 0, centerIndex);
         for (let i = 0; i < enemyCount; i++) {
-            // Find a random valid position in the maze, not near player (use larger safe zone for initial spawn)
             let position = this.findValidSpawnPosition(safePos, true, 10); // 10 units for initial spawn
-            // Fallback: never spawn within 2 units of player
-            if (!position) {
-                // Try to find any valid path cell at least 2 units away
-                for (let x = 0; x < size; x++) {
-                    for (let z = 0; z < size; z++) {
-                        if (this.mazeLayout[x][z] === 0) {
-                            const pos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-                            if (pos.distanceTo(safePos) > 2) {
-                                position = pos;
-                                break;
-                            }
-                        }
-                    }
-                    if (position) break;
-                }
-                if (!position) {
-                    // As a last resort, pick any valid cell (should never happen)
-                    for (let x = 0; x < size; x++) {
-                        for (let z = 0; z < size; z++) {
-                            if (this.mazeLayout[x][z] === 0) {
-                                position = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-                                console.warn('Enemy forced to spawn close to player:', position, 'player:', safePos);
-                                break;
-                            }
-                        }
-                        if (position) break;
-                    }
-                }
+            if (!position && this.walkableCells.length) {
+                position = this.walkableCells[0].position.clone();
             }
             if (!position) continue;
 
@@ -86,99 +112,75 @@ export class EnemyManager {
             } else {
                 type = 'Ambusher';
             }
-            this.spawnEnemy(position, type);
+            this.spawnEnemy(safePos, type, position);
         }
     }
     
     // minDistanceOverride allows us to set a custom minimum distance for special cases
-    findValidSpawnPosition(playerPosition, enforceSafeZone = false, minDistanceOverride = null) {
-        if (!this.mazeLayout) return null;
+    findValidSpawnPosition(referencePosition, enforceSafeZone = false, minDistanceOverride = null) {
+        const cells = (enforceSafeZone && this.safeSpawnCells.length) ? this.safeSpawnCells : this.walkableCells;
+        if (!cells.length) return null;
 
-        const size = this.mazeLayout.length;
-        const maxAttempts = 200;
-        let attempts = 0;
-        // Use override if provided, else use normal logic
-        const minDistance = minDistanceOverride !== null ? minDistanceOverride : (enforceSafeZone ? 7 : this.enemyProperties.spawnDistance);
-        // Center 3x3 forbidden zone
-        const forbiddenZone = [];
-        const center = Math.floor(size / 2);
-        for (let x = center - 1; x <= center + 1; x++) {
-            for (let z = center - 1; z <= center + 1; z++) {
-                forbiddenZone.push(`${x},${z}`);
+        const cursorKey = enforceSafeZone ? '_safeSpawnCursor' : '_spawnCursor';
+        let cursor = this[cursorKey] || 0;
+        const total = cells.length;
+
+        const fallbackRef = this._mazeCenter || (cells[0] ? cells[0].position : null);
+        const ref = referencePosition && Number.isFinite(referencePosition.x) && Number.isFinite(referencePosition.z)
+            ? referencePosition
+            : fallbackRef;
+        const refX = ref ? ref.x : 0;
+        const refZ = ref ? ref.z : 0;
+
+        const minDistance = minDistanceOverride !== null
+            ? minDistanceOverride
+            : (enforceSafeZone ? 7 : this.enemyProperties.spawnDistance);
+        const minDistanceSq = minDistance * minDistance;
+        const maxDistance = (this.enemyProperties.spawnDistance || 8) * 2;
+        const maxDistanceSq = maxDistance * maxDistance;
+
+        for (let checked = 0; checked < total; checked++) {
+            const entry = cells[cursor];
+            cursor = (cursor + 1) % total;
+            if (!entry) continue;
+            const pos = entry.position;
+            const dx = pos.x - refX;
+            const dz = pos.z - refZ;
+            const distSq = dx * dx + dz * dz;
+            if (distSq > minDistanceSq && distSq < maxDistanceSq) {
+                this[cursorKey] = cursor;
+                return pos.clone();
             }
         }
-        while (attempts < maxAttempts) {
-            const x = Math.floor(Math.random() * size);
-            const z = Math.floor(Math.random() * size);
-            if (this.mazeLayout[x][z] === 0) {
-                const spawnPos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-                const distanceToPlayer = spawnPos.distanceTo(playerPosition);
-                // Not in forbidden zone
-                if (!forbiddenZone.includes(`${x},${z}`) && distanceToPlayer > minDistance && distanceToPlayer < this.enemyProperties.spawnDistance * 2) {
-                    return spawnPos;
-                }
-            }
-            attempts++;
-        }
-        // Fallback: try any valid path cell outside forbidden zone
-        for (let x = 0; x < size; x++) {
-            for (let z = 0; z < size; z++) {
-                if (this.mazeLayout[x][z] === 0) {
-                    if (!forbiddenZone.includes(`${x},${z}`)) {
-                        const pos = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-                        if (!enforceSafeZone || pos.distanceTo(playerPosition) > minDistance) {
-                            return pos;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
+
+        this[cursorKey] = cursor;
+        const fallback = cells[cursor];
+        return fallback ? fallback.position.clone() : null;
     }
     
-    spawnEnemy(playerPosition, type = 'BasicStalker') {
-        // Check if we've reached max enemies
-        if (this.enemies.length >= this.spawnSettings.maxEnemies) {
-            return;
-        }
+    spawnEnemy(referencePosition, type = 'BasicStalker', overridePosition = null) {
+        const remainingSlots = this.spawnSettings.maxEnemies - this.enemies.length;
+        if (remainingSlots <= 0) return;
 
-        // For periodic spawns, enforce a safe zone of at least 7 units
-        const position = this.findValidSpawnPosition(playerPosition, true, 7);
+        const position = overridePosition ? overridePosition.clone() : this.findValidSpawnPosition(referencePosition, true, 7);
         if (!position) return;
 
-        let enemy;
         switch (type) {
             case 'PackHunter':
-                // Spawn a pack of hunters
-                for (let i = 0; i < this.spawnSettings.packSize; i++) {
-                    // Find valid position for each pack member
-                    const packPosition = this.findValidSpawnPosition(position, true, 7);
-                    if (!packPosition) continue;
-
-                    enemy = new PackHunter(
-                        this.scene,
-                        packPosition,
-                        { ...this.enemyProperties, usePathfinding: true },
-                        this.enemies
-                    );
-                    this.enemies.push(enemy);
-                }
+                this._spawnPack(position, remainingSlots);
                 break;
             case 'Ambusher':
-                enemy = new Ambusher(
-                    this.scene,
-                    position,
-                    { ...this.enemyProperties, reactsToSound: true }
-                );
-                this.enemies.push(enemy);
+                this._spawnSingle('Ambusher', position, {
+                    ...this.enemyProperties,
+                    movementSpeed: this.enemySpeed.ambusher,
+                    reactsToSound: true
+                });
                 break;
             default:
-                enemy = new BasicStalker(
-                    this.scene,
-                    position,
-                    { ...this.enemyProperties, movementSpeed: 0.03 }
-                );
-                this.enemies.push(enemy);
+                this._spawnSingle('BasicStalker', position, {
+                    ...this.enemyProperties,
+                    movementSpeed: this.enemySpeed.basic
+                });
         }
     }
     
@@ -186,14 +188,8 @@ export class EnemyManager {
         if (!this.mazeLayout) return;
         
         const center = Math.floor(this.mazeLayout.length / 2);
-        const position = new THREE.Vector3(center + 0.5, 0, center + 0.5);
-        
-        const enemy = new BasicStalker(
-            this.scene,
-            position,
-            { ...this.enemyProperties, movementSpeed: 0.03 }
-        );
-        this.enemies.push(enemy);
+        const position = new THREE.Vector3(center, 0, center);
+        this.spawnEnemy(this._mazeCenter || position, 'BasicStalker', position);
     }
     
     spawnEnemyNextToPlayer(playerPosition) {
@@ -216,13 +212,8 @@ export class EnemyManager {
                 z >= 0 && z < this.mazeLayout.length && 
                 this.mazeLayout[x][z] === 0) {
                 
-                const position = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-                const enemy = new BasicStalker(
-                    this.scene,
-                    position,
-                    { ...this.enemyProperties, movementSpeed: 0.03 }
-                );
-                this.enemies.push(enemy);
+                const position = new THREE.Vector3(x, 0, z);
+                this.spawnEnemy(playerPosition, 'BasicStalker', position);
                 return;
             }
         }
@@ -250,13 +241,13 @@ export class EnemyManager {
             z >= 0 && z < this.mazeLayout.length && 
             this.mazeLayout[x][z] === 0) {
             
-            const position = new THREE.Vector3(x + 0.5, 0, z + 0.5);
-            
+            const position = new THREE.Vector3(x, 0, z);
+
             // Randomly choose enemy type
             const enemyTypes = ['BasicStalker', 'PackHunter', 'Ambusher'];
             const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
             
-            this.spawnEnemy(position, type);
+            this.spawnEnemy(playerPos, type, position);
         }
     }
     
@@ -280,23 +271,48 @@ export class EnemyManager {
             this.spawnSettings.lastSpawnTime = currentTime;
         }
 
+        // Prune stale alerts
+        this.blackboard.alerts = this.blackboard.alerts.filter(a => (currentTime - a.time) < this.blackboard.maxAge);
+
         // Update all enemies
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
-            enemy.update(deltaTime, playerPosition, scanner, this.mazeLayout);
 
-            // Check for player damage
-            if (enemy.state === 'attack' && enemy.position.distanceTo(playerPosition) < 1.5 && enemy._readyToAttack) {
-                player.takeDamage(enemy.properties.damage);
+            // Early prune: skip and remove dead enemies before any interactions
+            if (!enemy || enemy.properties.health <= 0) {
+                if (enemy) this._recycleEnemy(enemy);
+                this.enemies.splice(i, 1);
+                continue;
             }
 
-            // Remove dead enemies
-            if (enemy.properties.health <= 0) {
-                this.enemiesKilled++;
-                if (enemy.mesh) {
-                    this.scene.remove(enemy.mesh);
+            enemy.update(deltaTime, playerPosition, scanner, this.mazeLayout);
+
+            // Check for player damage (live enemies only)
+            const attackRange = enemy.properties?.attackRange ?? 1.5;
+            if (enemy.state === 'attack' && enemy.position.distanceTo(playerPosition) <= attackRange && enemy._readyToAttack) {
+                player.takeDamage(enemy.properties.damage);
+                enemy._readyToAttack = false;
+                enemy.lastAttackTime = currentTime;
+            }
+
+            // Call-for-help when an enemy has line-of-sight
+            if (enemy.cachedCanSeePlayer && enemy.position.distanceTo(playerPosition) < (enemy.properties.detectionRange || 5)) {
+                if ((currentTime - this.blackboard.lastAlertTime) > this.blackboard.helpCooldown) {
+                    this.raiseAlert(playerPosition, 'sighting');
                 }
-                this.enemies.splice(i, 1);
+            }
+
+            // If there is a recent alert, direct idle/patrol enemies to investigate
+            const recentAlert = this.getLatestAlert();
+            if (recentAlert) {
+                const age = currentTime - recentAlert.time;
+                if (age < this.blackboard.maxAge * 0.75) {
+                    const shouldInvestigate = (enemy.state === 'idle' || enemy.state === 'patrol');
+                    if (shouldInvestigate) {
+                        enemy.targetPosition = recentAlert.position.clone();
+                        enemy.state = 'chase';
+                    }
+                }
             }
         }
     }
@@ -334,14 +350,11 @@ export class EnemyManager {
         const before = enemy.properties.health;
         enemy.properties.health -= amount;
         this.totalDamageDealt += amount; // Increment total damage dealt
-        console.log(`Enemy hit: type=${enemy.type}, before=${before}, damage=${amount}, after=${enemy.properties.health}`);
-        // If dead, remove from scene and arrays
+        // If dead, recycle into pool and remove from active list
         if (enemy.properties.health <= 0) {
             this.enemiesKilled++;
-            if (enemy.mesh && enemy.mesh.parent) {
-                enemy.mesh.parent.remove(enemy.mesh);
-            }
-            // Remove from this.enemies
+            this._recycleEnemy(enemy);
+            // Remove from active list
             this.enemies = this.enemies.filter(e => e !== enemy);
             // Remove from otherEnemies arrays (for PackHunter)
             for (const e of this.enemies) {
@@ -367,9 +380,7 @@ export class EnemyManager {
     
     clearEnemies() {
         for (const enemy of this.enemies) {
-            if (enemy.mesh) {
-                this.scene.remove(enemy.mesh);
-            }
+            this._recycleEnemy(enemy);
         }
         this.enemies = [];
     }
@@ -379,5 +390,177 @@ export class EnemyManager {
     }
     getTotalDamageDealt() {
         return this.totalDamageDealt;
+    }
+
+    // Blackboard helpers
+    raiseAlert(position, type = 'sighting') {
+        const currentTime = performance.now() / 1000;
+        this.blackboard.lastAlertTime = currentTime;
+        this.blackboard.alerts.push({ position: position.clone(), time: currentTime, type });
+        if (window?.game?.gameState?.emit) {
+            window.game.gameState.emit('EnemyAlerted', { position: position.clone(), type });
+        }
+    }
+    
+    // --- Object pooling helpers ---
+    _buildWalkableCells(layout) {
+        if (!layout || !layout.length) {
+            return { walkable: [], safe: [] };
+        }
+        const walkable = [];
+        const safe = [];
+        const size = layout.length;
+        const center = Math.floor(size / 2);
+        const coreMin = center - 1;
+        const coreMax = center + 1;
+        for (let x = 0; x < size; x++) {
+            for (let z = 0; z < size; z++) {
+                if (layout[x][z] !== 0) continue;
+                const position = new THREE.Vector3(x, 0, z);
+                const cell = { x, z, position };
+                walkable.push(cell);
+                if (x < coreMin || x > coreMax || z < coreMin || z > coreMax) {
+                    safe.push(cell);
+                }
+            }
+        }
+        this._shuffleArray(walkable);
+        this._shuffleArray(safe);
+        return { walkable, safe };
+    }
+
+    _shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+
+    _gatherNearbyPositions(origin, count, radius = 4) {
+        const results = [];
+        if (!origin || !this.walkableCells.length || count <= 0) {
+            return results;
+        }
+        const radiusSq = radius * radius;
+        const total = this.walkableCells.length;
+        let idx = this._neighborCursor % total;
+        let checked = 0;
+        while (checked < total && results.length < count) {
+            const cell = this.walkableCells[idx];
+            idx = (idx + 1) % total;
+            checked++;
+            if (!cell) continue;
+            const pos = cell.position;
+            const dx = pos.x - origin.x;
+            const dz = pos.z - origin.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq <= 0.25 || distSq > radiusSq) continue;
+            if (results.some(existing => Math.abs(existing.x - pos.x) < 0.01 && Math.abs(existing.z - pos.z) < 0.01)) {
+                continue;
+            }
+            results.push(pos.clone());
+        }
+        this._neighborCursor = idx;
+        return results;
+    }
+
+    _spawnSingle(type, position, properties) {
+        const enemy = this._acquireEnemy(type, position, properties);
+        if (!enemy) return null;
+        if (type === 'PackHunter') {
+            enemy.otherEnemies = this.enemies;
+        }
+        this.enemies.push(enemy);
+        return enemy;
+    }
+
+    _spawnPack(position, slotsRemaining) {
+        const desiredCount = Math.min(this.spawnSettings.packSize, slotsRemaining);
+        if (desiredCount <= 0) return;
+        const positions = [position];
+        if (desiredCount > 1) {
+            const extras = this._gatherNearbyPositions(position, desiredCount - 1, 4);
+            for (const extra of extras) {
+                positions.push(extra);
+            }
+        }
+        for (const pos of positions) {
+            this._spawnSingle('PackHunter', pos, {
+                ...this.enemyProperties,
+                usePathfinding: true,
+                movementSpeed: this.enemySpeed.pack
+            });
+        }
+    }
+
+    _acquireEnemy(type, position, properties) {
+        let enemy;
+        const poolArr = this.pool[type];
+        if (poolArr && poolArr.length > 0) {
+            enemy = poolArr.pop();
+            enemy.revive(position, properties);
+        } else {
+            switch (type) {
+                case 'PackHunter':
+                    enemy = new PackHunter(this.scene, position, properties, this.enemies);
+                    break;
+                case 'Ambusher':
+                    enemy = new Ambusher(this.scene, position, properties);
+                    break;
+                default:
+                    enemy = new BasicStalker(this.scene, position, properties);
+            }
+        }
+        if (enemy) {
+            enemy.wallObjects = this.wallObjects;
+            enemy.wallBoxes = this.wallBoxes;
+        }
+        return enemy;
+    }
+
+    _recycleEnemy(enemy) {
+        if (!enemy) return;
+        enemy.deactivate();
+        const t = enemy.type || 'BasicStalker';
+        if (!this.pool[t]) this.pool[t] = [];
+        this.pool[t].push(enemy);
+    }
+
+    getLatestAlert() {
+        if (!this.blackboard.alerts.length) return null;
+        return this.blackboard.alerts[this.blackboard.alerts.length - 1];
+    }
+
+    // Rough measure of how spiky things are near the player
+    getAggroLevel(playerPosition) {
+        if (!playerPosition) return 0;
+        // Count nearby hostile states and distance weight
+        let score = 0;
+        for (const e of this.enemies) {
+            const d = e.position.distanceTo(playerPosition);
+            const state = (e.state || '').toLowerCase();
+            const stateWeight = state === 'attack' ? 2.0 : state === 'chase' ? 1.0 : 0.3;
+            const distWeight = Math.max(0, 1 - d / 12);
+            score += stateWeight * distWeight;
+        }
+        // Normalize to 0-100
+        return Math.max(0, Math.min(100, Math.round(score * 25)));
+    }
+
+    stunEnemiesInRadius(center, radius = 6, duration = 2.5) {
+        if (!center) return 0;
+        let stunned = 0;
+        for (const e of this.enemies) {
+            if (e && e.properties.health > 0 && e.position.distanceTo(center) <= radius) {
+                if (typeof e.applyStun === 'function') {
+                    e.applyStun(duration);
+                    stunned++;
+                }
+            }
+        }
+        if (stunned > 0 && window?.game?.gameState?.emit) {
+            window.game.gameState.emit('Overcharge', { position: center.clone(), count: stunned });
+        }
+        return stunned;
     }
 }

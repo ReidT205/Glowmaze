@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 
 export class Player {
-    constructor(scene, camera) {
+    constructor(scene, camera, gameState = null) {
         this.scene = scene;
         this.camera = camera;
+        this.gameState = gameState;
         
         // Player properties
         this.height = 0.2; // Lowered further so user can't see over walls
@@ -40,6 +41,16 @@ export class Player {
         this.rotation = 0; // Initial rotation (facing forward)
         this.targetRotation = 0; // Target rotation for smooth turning
         this.rotationSpeed = 5; // Rotation speed multiplier
+    }
+
+    takeDamage(amount = 0) {
+        const dmg = Number.isFinite(amount) ? amount : 0;
+        if (this.gameState && typeof this.gameState.takeDamage === 'function') {
+            this.gameState.takeDamage(dmg);
+        }
+        if (window?.game?.uiManager?.pulseScreen) {
+            window.game.uiManager.pulseScreen('#aa0000', 200);
+        }
     }
     
     update(deltaTime, inputManager) {

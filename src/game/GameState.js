@@ -38,6 +38,9 @@ export class GameState {
         this.monsterProximity = false;
         this.pausedTime = 0;
         this.isTimerPaused = false;
+
+        // Simple event bus
+        this._listeners = new Map();
     }
     
     reset() {
@@ -125,4 +128,24 @@ export class GameState {
             this.playerHealth = Math.min(100, this.playerHealth + deltaTime * 2); // 2 health per second
         }
     }
-} 
+
+    // --- Event Bus ---
+    on(event, handler) {
+        if (!this._listeners.has(event)) this._listeners.set(event, new Set());
+        this._listeners.get(event).add(handler);
+        return () => this.off(event, handler);
+    }
+
+    off(event, handler) {
+        const set = this._listeners.get(event);
+        if (set) set.delete(handler);
+    }
+
+    emit(event, payload) {
+        const set = this._listeners.get(event);
+        if (!set) return;
+        for (const fn of Array.from(set)) {
+            try { fn(payload); } catch (_) { /* no-op */ }
+        }
+    }
+}

@@ -10,6 +10,7 @@ import { MazeGenerator } from './game/MazeGenerator';
 import { InputManager } from './game/InputManager';
 import { SoundManager } from './audio/SoundManager';
 import { THEMES } from './game/themes.js';
+import { InfluenceMap } from './game/InfluenceMap';
 
 class Game {
     constructor() {
@@ -22,19 +23,35 @@ class Game {
         this.inputManager = new InputManager();
         this.mazeGenerator = new MazeGenerator();
         // Store player color (default cyan)
-        this.playerColor = 0x00ffff;
+        this.playerColor = '#00ffff';
         // --- Scanner type from customization (default to 'standard') ---
         let initialScannerType = 'standard';
         if (window.localStorage && window.localStorage.getItem('lastScannerType')) {
             initialScannerType = window.localStorage.getItem('lastScannerType');
         }
-        this.player = new Player(this.scene, this.camera);
+        this.player = new Player(this.scene, this.camera, this.gameState);
         this.scanner = new Scanner(this.scene, () => this.playerColor, this.camera, initialScannerType);
+        this.scanner.setScannerColor(this.playerColor);
         this.enemyManager = new EnemyManager(this.scene);
         this.uiManager = new UIManager();
         this.uiManager.setCamera(this.camera);
         this.menuManager = new MenuManager();
         this.soundManager = new SoundManager();
+        // Show initial scanner type
+        this.uiManager.setScannerType(initialScannerType);
+        // Wire event bus handlers
+        this.gameState.on('LightPulsed', ({ position }) => {
+            if (position && this.enemyManager?.raiseAlert) {
+                this.enemyManager.raiseAlert(position, 'light');
+            }
+            this.uiManager.flashMinimapBorder('#ffaa00', 250);
+        });
+        this.gameState.on('EnemyAlerted', ({ position }) => {
+            this.uiManager.flashMinimapBorder('#ff3300', 300);
+        });
+        this.gameState.on('Overcharge', ({ position, count }) => {
+            this.uiManager.pulseScreen('#ff00aa', 350);
+        });
         
         // Bind methods
         this.animate = this.animate.bind(this);
@@ -68,6 +85,10 @@ class Game {
             if (e.key.toLowerCase() === 'm' && !this.gameState.isPaused) {
                 this.uiManager.toggleMinimapSize();
             }
+            // Toggle heatmap overlay (H)
+            if (e.key.toLowerCase() === 'h' && !this.gameState.isPaused) {
+                this.uiManager.toggleHeatmapOverlay();
+            }
             // --- Scanner type switch hotkey (Q) ---
             if (e.key.toLowerCase() === 'q' && !this.gameState.isPaused) {
                 const switched = this.scanner.cycleScannerType(this.gameState);
@@ -76,12 +97,25 @@ class Game {
                     if (this.soundManager) {
                         this.soundManager.playMenuClickSound();
                     }
-                    // Optionally update UI to show scanner type
-                    // this.uiManager.setScannerType(this.scanner.getCurrentScannerType());
+                    // Update UI to show scanner type
+                    this.uiManager.setScannerType(this.scanner.getCurrentScannerType());
                     // Save last scanner type for next session
                     if (window.localStorage) {
                         window.localStorage.setItem('lastScannerType', this.scanner.getCurrentScannerType());
                     }
+                }
+            }
+            // Overcharge flare (E): big light pulse + stun
+            if (e.key.toLowerCase() === 'e' && !this.gameState.isPaused) {
+                const cost = 35;
+                if (this.gameState.playerEnergy >= cost && this.gameState.useEnergy(cost)) {
+                    const pos = this.camera.position.clone();
+                    InfluenceMap.addLightWorld(pos, 6, 8);
+                    const stunned = this.enemyManager.stunEnemiesInRadius(pos, 6, 2.5);
+                    if (this.soundManager) this.soundManager.playScannerSound();
+                    this.uiManager.pulseScreen('#ff0088', 350);
+                    // Visual feedback on minimap
+                    this.uiManager.flashMinimapBorder('#ff66aa', 400);
                 }
             }
         });
@@ -139,10 +173,7 @@ class Game {
             const mazeLayout = this.mazeGenerator.getMazeLayout();
             if (mazeLayout && this.discovered) {
                 const playerMazePos = this.getPlayerMazeCoords();
-                let colorStr = '#00ffff';
-                if (typeof this.playerColor === 'number') {
-                    colorStr = '#' + this.playerColor.toString(16).padStart(6, '0');
-                }
+                const colorStr = this.getPlayerColorHex();
                 this.uiManager.updateMinimap(mazeLayout, this.discovered, playerMazePos, colorStr);
             }
         };
@@ -262,18 +293,21 @@ class Game {
             this.uiManager.update(this.gameState);
             // Update discovered cells based on player scan
             this.updateDiscoveredFromScanner();
+            // Leave a faint trail of light as you move (risk vs. reward)
+            InfluenceMap.addLightWorld(this.camera.position, 0.12, 2.5);
         }
+        // Decay influence fields
+        InfluenceMap.update(deltaTime);
         // Always update minimap
         const mazeLayout = this.mazeGenerator.getMazeLayout();
         if (mazeLayout && this.discovered) {
             const playerMazePos = this.getPlayerMazeCoords();
-            // Convert playerColor to hex string for minimap
-            let colorStr = '#00ffff';
-            if (typeof this.playerColor === 'number') {
-                colorStr = '#' + this.playerColor.toString(16).padStart(6, '0');
-            }
+            const colorStr = this.getPlayerColorHex();
             this.uiManager.updateMinimap(mazeLayout, this.discovered, playerMazePos, colorStr);
         }
+        // Update aggro meter from enemy manager
+        const aggro = this.enemyManager.getAggroLevel(this.player.getPosition());
+        this.uiManager.updateAggro(aggro);
         // Show game over screen if player is dead
         if (this.gameState.isGameOver && !this._gameOverShown) {
             this._gameOverShown = true;
@@ -343,6 +377,15 @@ class Game {
     startGame(level, customization) {
         // Clear existing scene
         this.clearSceneExceptCamera();
+        // Ensure scanner render groups are reattached after clearing
+        if (this.scanner) {
+            if (this.scanner.dotsGroup && !this.scene.children.includes(this.scanner.dotsGroup)) {
+                this.scene.add(this.scanner.dotsGroup);
+            }
+            if (this.scanner.scanLine && !this.scene.children.includes(this.scanner.scanLine)) {
+                this.scene.add(this.scanner.scanLine);
+            }
+        }
         
         // Reset game state
         this.gameState.reset();
@@ -363,12 +406,16 @@ class Game {
                 customization.scannerType
             );
             this.playerColor = this.getColorHexFromSkin(customization.skin);
+            if (this.scanner) {
+                this.scanner.setScannerColor(this.playerColor);
+            }
             // Set scanner type from customization
             if (customization.scannerType) {
                 this.scanner.applyScannerType(customization.scannerType);
                 if (window.localStorage) {
                     window.localStorage.setItem('lastScannerType', customization.scannerType);
                 }
+                this.uiManager.setScannerType(customization.scannerType);
             }
         }
         
@@ -382,6 +429,13 @@ class Game {
         this.camera.position.copy(spawnPos);
         // Ensure enemies spawn by setting maze layout, passing player spawn position for safe zone
         this.enemyManager.setMazeLayout(this.mazeGenerator.getMazeLayout(), spawnPos);
+        // Init influence maps to maze size
+        const mazeLayout = this.mazeGenerator.getMazeLayout();
+        if (mazeLayout && mazeLayout.length) {
+            InfluenceMap.init(mazeLayout.length);
+            // Seed spawn with a visible zone
+            InfluenceMap.addLightWorld(spawnPos, 0.5, 4);
+        }
         // Initialize discovered array with only spawn point visible
         const size = this.mazeGenerator.mazeSize;
         this.discovered = Array(size).fill().map(() => Array(size).fill(false));
@@ -481,12 +535,26 @@ class Game {
     
     getColorHexFromSkin(skin) {
         switch (skin) {
-            case 'cyan': return 0x00ffff;
-            case 'magenta': return 0xff00ff;
-            case 'yellow': return 0xffff00;
-            case 'green': return 0x00ff00;
-            default: return 0x00ffff;
+            case 'magenta': return '#ff00ff';
+            case 'yellow': return '#ffff00';
+            case 'green': return '#00ff00';
+            case 'cyan':
+            default:
+                return '#00ffff';
         }
+    }
+
+    getPlayerColorHex() {
+        if (typeof this.playerColor === 'string') {
+            return this.playerColor;
+        }
+        if (typeof this.playerColor === 'number') {
+            return `#${this.playerColor.toString(16).padStart(6, '0')}`;
+        }
+        if (this.playerColor && typeof this.playerColor.getHexString === 'function') {
+            return `#${this.playerColor.getHexString()}`;
+        }
+        return '#00ffff';
     }
 }
 

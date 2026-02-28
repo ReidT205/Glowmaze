@@ -8,6 +8,10 @@ export class AStarPathfinding {
         const goalX = Math.floor(goal.x);
         const goalZ = Math.floor(goal.z);
 
+        const layout = (typeof window !== 'undefined' && window.game && window.game.mazeGenerator && window.game.mazeGenerator.getMazeLayout)
+            ? window.game.mazeGenerator.getMazeLayout()
+            : null;
+
         // Initialize open and closed sets
         const openSet = new Set([`${startX},${startZ}`]);
         const closedSet = new Set();
@@ -21,6 +25,12 @@ export class AStarPathfinding {
         gScore.set(`${startX},${startZ}`, 0);
         fScore.set(`${startX},${startZ}`, this.heuristic(startX, startZ, goalX, goalZ));
 
+        // Quick bounds guard
+        const inBounds = (x, z) => {
+            if (!layout) return true;
+            return x >= 0 && z >= 0 && x < layout.length && z < layout.length && layout[x][z] === 0;
+        };
+
         while (openSet.size > 0) {
             // Find node with lowest fScore
             let current = null;
@@ -31,6 +41,10 @@ export class AStarPathfinding {
                     lowestFScore = score;
                     current = node;
                 }
+            }
+
+            if (!current) {
+                break;
             }
 
             // If we reached the goal, reconstruct and return the path
@@ -45,51 +59,64 @@ export class AStarPathfinding {
 
             // Check neighbors
             const neighbors = this.getNeighbors(currentX, currentZ);
-            for (const neighbor of neighbors) {
-                const [neighborX, neighborZ] = neighbor;
+            for (const [neighborX, neighborZ, stepCost] of neighbors) {
                 const neighborKey = `${neighborX},${neighborZ}`;
 
-                // Skip if neighbor is in closed set
-                if (closedSet.has(neighborKey)) continue;
+                // Skip invalid or closed
+                if (!inBounds(neighborX, neighborZ) || closedSet.has(neighborKey)) continue;
 
-                // Calculate tentative gScore
-                const tentativeGScore = (gScore.get(current) || Infinity) + 1;
+                // Base movement cost (1 for ortho, ~1.4 for diagonal)
+                let baseCost = stepCost;
+                const tentativeGScore = (gScore.get(current) || Infinity) + baseCost;
 
                 // If neighbor is not in open set, add it
                 if (!openSet.has(neighborKey)) {
                     openSet.add(neighborKey);
-                }
-                // If this path to neighbor is worse than previous, skip
-                else if (tentativeGScore >= (gScore.get(neighborKey) || Infinity)) {
+                } else if (tentativeGScore >= (gScore.get(neighborKey) || Infinity)) {
+                    // Worse than previously known route
                     continue;
                 }
 
                 // This path is the best so far, record it
                 cameFrom.set(neighborKey, current);
                 gScore.set(neighborKey, tentativeGScore);
-                fScore.set(neighborKey, tentativeGScore + this.heuristic(neighborX, neighborZ, goalX, goalZ));
+                fScore.set(
+                    neighborKey,
+                    tentativeGScore + this.heuristic(neighborX, neighborZ, goalX, goalZ)
+                );
             }
         }
 
-        // No path found
+        // No path found: fallback to goal (straight move)
         return [goal];
     }
 
     static heuristic(x1, z1, x2, z2) {
-        // Manhattan distance
-        return Math.abs(x1 - x2) + Math.abs(z1 - z2);
+        // Use octile distance for 8-directional movement
+        const dx = Math.abs(x1 - x2);
+        const dz = Math.abs(z1 - z2);
+        const D = 1;
+        const D2 = Math.SQRT2;
+        return D * (dx + dz) + (D2 - 2 * D) * Math.min(dx, dz);
     }
 
     static getNeighbors(x, z) {
-        // Get valid neighboring cells (assuming 8-directional movement)
-        const neighbors = [];
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dz = -1; dz <= 1; dz++) {
-                if (dx === 0 && dz === 0) continue;
-                neighbors.push([x + dx, z + dz]);
-            }
+        // 8-directional neighbors with per-step cost
+        const dirs = [
+            [1, 0, 1],
+            [-1, 0, 1],
+            [0, 1, 1],
+            [0, -1, 1],
+            [1, 1, Math.SQRT2],
+            [1, -1, Math.SQRT2],
+            [-1, 1, Math.SQRT2],
+            [-1, -1, Math.SQRT2]
+        ];
+        const res = [];
+        for (const [dx, dz, c] of dirs) {
+            res.push([x + dx, z + dz, c]);
         }
-        return neighbors;
+        return res;
     }
 
     static reconstructPath(cameFrom, current, start) {
@@ -98,7 +125,7 @@ export class AStarPathfinding {
         
         while (cameFrom.has(currentKey)) {
             const [x, z] = currentKey.split(',').map(Number);
-            path.unshift(new THREE.Vector3(x + 0.5, 0, z + 0.5));
+            path.unshift(new THREE.Vector3(x, 0, z));
             currentKey = cameFrom.get(currentKey);
         }
         

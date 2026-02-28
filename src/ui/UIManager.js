@@ -1,4 +1,6 @@
+import * as THREE from 'three';
 import { THEMES } from '../game/themes.js';
+import { InfluenceMap } from '../game/InfluenceMap.js';
 
 export class UIManager {
     constructor() {
@@ -71,6 +73,18 @@ export class UIManager {
         
         // Tutorial text
         this.tutorialText = this.createTutorialText();
+
+        // Aggro bar (enemy attention meter)
+        this.aggroBar = this.createAggroBar();
+
+        // Scanner type badge
+        this.scannerBadge = this.createScannerBadge();
+
+        // Fullscreen flash overlay
+        this.flashOverlay = this.createFlashOverlay();
+
+        // Heatmap overlay toggle state
+        this.showHeatmapOverlay = true;
     }
     
     createHealthBar() {
@@ -129,6 +143,99 @@ export class UIManager {
         container.appendChild(fill);
         this.container.appendChild(container);
         return { container, fill };
+    }
+
+    createAggroBar() {
+        const container = document.createElement('div');
+        container.className = 'aggro-bar';
+        container.style.cssText = `
+            position: absolute;
+            bottom: 80px;
+            left: 20px;
+            width: 200px;
+            height: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid #ff0040;
+            border-radius: 10px;
+            overflow: hidden;
+        `;
+
+        const fill = document.createElement('div');
+        fill.className = 'aggro-fill';
+        fill.style.cssText = `
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #330000, #ff0040);
+            transition: width 0.2s ease;
+        `;
+
+        const label = document.createElement('div');
+        label.textContent = 'AGGRO';
+        label.style.cssText = `
+            position: absolute;
+            left: 8px;
+            top: -18px;
+            color: #ff0040;
+            font-size: 12px;
+            text-shadow: 0 0 6px #ff0040;
+        `;
+
+        container.appendChild(fill);
+        container.appendChild(label);
+        this.container.appendChild(container);
+        return { container, fill };
+    }
+
+    createScannerBadge() {
+        const badge = document.createElement('div');
+        badge.style.cssText = `
+            position: absolute;
+            bottom: 110px;
+            left: 20px;
+            padding: 4px 10px;
+            border: 2px solid #00ffff;
+            border-radius: 6px;
+            color: #00ffff;
+            font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        `;
+        badge.textContent = 'SCANNER: STANDARD';
+        this.container.appendChild(badge);
+        return badge;
+    }
+
+    createFlashOverlay() {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at center, rgba(255,255,255,0.5), rgba(255,0,128,0.0) 70%);
+            opacity: 0;
+            transition: opacity 0.25s ease;
+            z-index: 1200;
+        `;
+        this.container.appendChild(overlay);
+        return overlay;
+    }
+
+    pulseScreen(color = '#ff00aa', duration = 300) {
+        if (!this.flashOverlay) return;
+        this.flashOverlay.style.background = `radial-gradient(circle at center, ${this.hexToRgba(color, 0.5)}, rgba(0,0,0,0) 70%)`;
+        this.flashOverlay.style.opacity = '1';
+        setTimeout(() => {
+            this.flashOverlay.style.opacity = '0';
+        }, duration);
+    }
+
+    hexToRgba(hex, a) {
+        const c = hex.replace('#','');
+        const r = parseInt(c.substr(0,2),16);
+        const g = parseInt(c.substr(2,2),16);
+        const b = parseInt(c.substr(4,2),16);
+        return `rgba(${r},${g},${b},${a})`;
     }
     
     createScoreDisplay() {
@@ -318,7 +425,7 @@ export class UIManager {
             font-size: 16px;
             text-align: center;
         `;
-        text.textContent = 'move = WASD| look = Mouse | scan = Space | sprint = Shift | pause = ESC | enlarge minimap = M';
+        text.textContent = 'WASD move | Mouse look | Space scan | Q switch scanner | E overcharge | Shift sprint | ESC pause | M enlarge map | H heatmap';
         this.container.appendChild(text);
         return text;
     }
@@ -361,6 +468,19 @@ export class UIManager {
                 }
             }
         }
+
+        // Heatmap overlay (light influence)
+        if (this.showHeatmapOverlay && InfluenceMap.size) {
+            for (let x = 0; x < mazeLayout.length; x++) {
+                for (let z = 0; z < mazeLayout.length; z++) {
+                    const value = InfluenceMap.light?.[x]?.[z] || 0;
+                    if (value <= 0.05) continue;
+                    const alpha = Math.min(0.7, value / 4);
+                    ctx.fillStyle = `rgba(255, 64, 32, ${alpha})`;
+                    ctx.fillRect(x * cellSize, z * cellSize, cellSize, cellSize);
+                }
+            }
+        }
         
         // Draw player position
         const playerX = playerPos.x * cellSize;
@@ -372,11 +492,22 @@ export class UIManager {
         ctx.fillStyle = playerColor;
         ctx.fill();
         
-        // Calculate the centerline angle of the FOV cone on the canvas
-        const centerlineCanvasAngle = Math.PI / 2 - this.camera.rotation.y;
+        // Calculate forward direction in world space (robust to PointerLockControls parent yaw)
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        forward.y = 0; // project onto XZ plane
+        if (forward.lengthSq() === 0) {
+            forward.set(0, 0, -1); // default
+        } else {
+            forward.normalize();
+        }
+        // Convert to canvas angle: atan2(z, x), with 0 along +X and positive angles clockwise due to y-down canvas
+        const centerlineCanvasAngle = Math.atan2(forward.z, forward.x);
 
-        // FOV properties
-        const fovAngle = Math.PI / 3; // 60 degrees FOV
+        // FOV properties: use camera horizontal FOV so cone matches on-screen view
+        const vFovRad = (this.camera.fov || 75) * Math.PI / 180;
+        const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * (this.camera.aspect || (window.innerWidth / Math.max(1, window.innerHeight))));
+        const fovAngle = hFovRad; // horizontal field of view in radians
         const fovRadius = cellSize * 15; // Match maxDistance from Game class
 
         // Save context state
@@ -388,8 +519,10 @@ export class UIManager {
         // Draw FOV cone using absolute angles
         ctx.beginPath();
         ctx.moveTo(0, 0); // Start from the player's center
-        const startAngle = centerlineCanvasAngle - fovAngle / 2;
-        const endAngle = centerlineCanvasAngle + fovAngle / 2;
+        let startAngle = centerlineCanvasAngle - fovAngle / 2;
+        let endAngle = centerlineCanvasAngle + fovAngle / 2;
+        // Ensure the arc always follows the intended small wedge across the 0/2pi seam
+        if (endAngle < startAngle) endAngle += Math.PI * 2;
         ctx.arc(0, 0, fovRadius, startAngle, endAngle);
         ctx.closePath(); // Creates the cone shape by connecting to moveTo point
 
@@ -412,15 +545,18 @@ export class UIManager {
             playerX + cellSize / 2,
             playerZ + cellSize / 2
         );
-        ctx.lineTo(
-            playerX + cellSize / 2 + Math.cos(this.camera.rotation.y) * cellSize,
-            playerZ + cellSize / 2 + Math.sin(this.camera.rotation.y) * cellSize
-        );
+        {
+            const dirAngle = centerlineCanvasAngle;
+            ctx.lineTo(
+                playerX + cellSize / 2 + Math.cos(dirAngle) * cellSize,
+                playerZ + cellSize / 2 + Math.sin(dirAngle) * cellSize
+            );
+        }
         ctx.stroke();
         
         // Add glow effect using theme color
         this.minimapCanvas.style.boxShadow = `0 0 20px ${accentColor}44`;
-        
+
         // Draw enemy positions (always visible)
         const enemyPositions = window.game.enemyManager.getEnemyPositions();
         for (const enemy of enemyPositions) {
@@ -565,6 +701,37 @@ export class UIManager {
         // Update the player name box to reflect the current player name
         if (this.playerNameBox) {
             this.playerNameBox.textContent = gameState.playerName || 'Your Name';
+        }
+    }
+
+    setScannerType(type) {
+        if (!this.scannerBadge) return;
+        this.scannerBadge.textContent = `SCANNER: ${String(type || '').toUpperCase()}`;
+    }
+
+    toggleHeatmapOverlay() {
+        this.showHeatmapOverlay = !this.showHeatmapOverlay;
+    }
+
+    flashMinimapBorder(color = '#ff0040', duration = 400) {
+        const el = this.minimapContainer;
+        if (!el) return;
+        const oldBorder = el.style.borderColor;
+        const oldShadow = el.style.boxShadow;
+        el.style.borderColor = color;
+        el.style.boxShadow = `0 0 28px ${color}cc`;
+        setTimeout(() => {
+            el.style.borderColor = '#00ffff';
+            el.style.boxShadow = oldShadow || `0 0 20px ${color}44`;
+        }, duration);
+    }
+
+    updateAggro(level) {
+        if (!this.aggroBar) return;
+        const clamped = Math.max(0, Math.min(100, level || 0));
+        const target = `${clamped}%`;
+        if (this.aggroBar.fill.style.width !== target) {
+            this.aggroBar.fill.style.width = target;
         }
     }
     
